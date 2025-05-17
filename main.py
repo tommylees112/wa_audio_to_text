@@ -144,11 +144,11 @@ def transcribe_audio(
         raise
 
 
-def process_files():
+def process_files(filetype: Literal["ogg", "opus"] = "ogg"):
     """Process all opus files in the raw directory."""
-    opus_files = list(RAW_DIR.glob("*.opus"))
+    opus_files = list(RAW_DIR.glob(f"*.{filetype}"))
     if not opus_files:
-        logger.warning("No opus files found in raw directory")
+        logger.warning(f"No {filetype} files found in raw directory")
         return
 
     for opus_file in opus_files:

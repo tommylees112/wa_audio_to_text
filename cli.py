@@ -1,11 +1,43 @@
+"""
+CLI Endpoints Overview:
+
+1. mv (Move Files)
+   - Command: mv <source_pattern> <target_dir>
+   - Purpose: Moves files matching a glob pattern to a target directory
+   - Example: python cli.py mv "data/transcribed/*.txt" "data/transcribed/nina"
+
+2. concat (Concatenate Transcripts)
+   - Command: concat <input_files> <output_file>
+   - Purpose: Combines multiple transcript files into a single file
+   - Example: python cli.py concat "data/transcribed/*.txt" "combined.txt"
+
+3. clean (Clean Timestamps)
+   - Command: clean <input_file> <output_file>
+   - Purpose: Removes timestamps from transcript files
+   - Example: python cli.py clean "input.txt" "cleaned.txt"
+
+4. process (Process Audio Files)
+   - Command: process <input_dir> <output_dir>
+   - Purpose: Processes audio files in a directory
+   - Example: python cli.py process "data/raw" "data/processed"
+
+5. transcribe (Transcribe Audio Files)
+   - Command: transcribe <input_dir> <output_dir>
+   - Purpose: Transcribes audio files in a directory
+   - Example: python cli.py transcribe "data/processed" "data/transcribed"
+"""
+
 import glob
 import re
 import shutil
+import sys
 from pathlib import Path
-from typing import List
+from typing import List, Literal
 
 import click
 from loguru import logger
+
+sys.path.append(str(Path(__file__).parent))  # Ensure main.py can be imported
 
 
 @click.group()
@@ -18,7 +50,7 @@ def cli() -> None:
     pass
 
 
-@cli.command()
+@cli.command("mv")
 @click.argument("source_pattern")
 @click.argument("target_dir")
 def mv(source_pattern: str, target_dir: str) -> None:
@@ -46,7 +78,7 @@ def mv(source_pattern: str, target_dir: str) -> None:
             click.echo(f"Moved {filename} to {target_dir}")
 
 
-@cli.command()
+@cli.command("concat")
 @click.argument("source_dir")
 @click.option("--output", "-o", help="Output file path")
 def concatenate_files(source_dir: str, output: str | None) -> None:
@@ -83,7 +115,7 @@ def concatenate_files(source_dir: str, output: str | None) -> None:
     click.echo(f"Concatenated files to {output}")
 
 
-@cli.command()
+@cli.command("clean")
 @click.argument("input_file")
 @click.option("--output", "-o", help="Output file path")
 def remove_timestamps(input_file: str, output: str | None) -> None:
@@ -139,6 +171,79 @@ def remove_timestamps(input_file: str, output: str | None) -> None:
     logger.success(f"Successfully processed {input_path} -> {output}")
 
     click.echo(f"Removed timestamps from {input_path} to {output}")
+
+
+@cli.command("process")
+@click.argument("input_dir")
+@click.argument("output_dir")
+@click.option("--filetype", "-f", help="File type to process", default="opus")
+def process(
+    input_dir: str, output_dir: str, filetype: Literal["ogg", "opus"] = "opus"
+) -> None:
+    """Process all .opus audio files in a directory, converting them to .wav files in the output directory.
+
+    Args:
+        input_dir: Directory containing .opus files (e.g., "data/raw")
+        output_dir: Directory to save .wav files (e.g., "data/processed")
+
+    Example:
+        $ python cli.py process "data/raw" "data/processed"
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    opus_files = list(input_path.glob("*.opus"))
+    if not opus_files:
+        logger.warning(f"No .opus files found in {input_dir}")
+        click.echo(f"No .opus files found in {input_dir}")
+        return
+
+    processed = 0
+    skipped = 0
+    failed = 0
+
+    for opus_file in opus_files:
+        wav_file = output_path / f"{opus_file.stem}.wav"
+        if wav_file.exists():
+            logger.info(f"WAV file already exists for {opus_file.name}, skipping.")
+            skipped += 1
+            continue
+        try:
+            # Use convert_opus_to_wav but override output dir
+            cmd = [
+                "ffmpeg",
+                "-f",
+                "ogg",
+                "-i",
+                str(opus_file),
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                str(wav_file),
+            ]
+            import subprocess
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(
+                    f"FFmpeg conversion failed for {opus_file.name}: {result.stderr}"
+                )
+                failed += 1
+                continue
+            logger.success(f"Converted {opus_file.name} to {wav_file.name}")
+            processed += 1
+        except Exception as e:
+            logger.error(f"Error converting {opus_file.name}: {str(e)}")
+            failed += 1
+            continue
+
+    click.echo(
+        f"Processing complete. Converted: {processed}, Skipped: {skipped}, Failed: {failed}"
+    )
 
 
 if __name__ == "__main__":
