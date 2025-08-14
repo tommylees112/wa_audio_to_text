@@ -63,6 +63,40 @@ def convert_opus_to_wav(opus_file: Path) -> Path:
         raise
 
 
+def extract_audio_from_mp4(mp4_file: Path, output_dir: Path = PROCESSED_DIR) -> Path:
+    """Extract audio from MP4 video file to WAV format using ffmpeg."""
+    wav_file = output_dir / f"{mp4_file.stem}.wav"
+    
+    if wav_file.exists():
+        logger.info(f"WAV file already exists for {mp4_file.name}")
+        return wav_file
+    
+    try:
+        cmd = [
+            "ffmpeg",
+            "-i",
+            str(mp4_file),
+            "-vn",  # No video
+            "-acodec",
+            "pcm_s16le",  # Use 16-bit PCM
+            "-ar",
+            "16000",  # Set sample rate to 16kHz
+            "-ac",
+            "1",  # Convert to mono
+            str(wav_file),
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"FFmpeg audio extraction failed: {result.stderr}")
+        
+        logger.success(f"Extracted audio from {mp4_file.name} to WAV")
+        return wav_file
+    except Exception as e:
+        logger.error(f"Error extracting audio from {mp4_file.name}: {str(e)}")
+        raise
+
+
 def format_timestamp(seconds: float) -> str:
     """Format seconds into HH:MM:SS.mmm format."""
     hours = int(seconds // 3600)

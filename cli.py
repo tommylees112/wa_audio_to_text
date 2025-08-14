@@ -25,6 +25,16 @@ CLI Endpoints Overview:
    - Command: transcribe <input_dir> <output_dir>
    - Purpose: Transcribes audio files in a directory
    - Example: python cli.py transcribe "data/processed" "data/transcribed"
+
+6. extract-audio (Extract Audio from Video)
+   - Command: extract-audio <video_file> [output_dir]
+   - Purpose: Extracts audio from MP4 video file to WAV format
+   - Example: python cli.py extract-audio "data/raw/video.mp4" "data/processed"
+
+7. process-video (Complete Video Processing)
+   - Command: process-video <video_file>
+   - Purpose: Extracts audio from video and transcribes it
+   - Example: python cli.py process-video "data/raw/video.mp4"
 """
 
 import glob
@@ -38,6 +48,8 @@ import click
 from loguru import logger
 
 sys.path.append(str(Path(__file__).parent))  # Ensure main.py can be imported
+
+from main import extract_audio_from_mp4, transcribe_audio, PROCESSED_DIR, TRANSCRIBED_DIR
 
 
 @click.group()
@@ -244,6 +256,144 @@ def process(
     click.echo(
         f"Processing complete. Converted: {processed}, Skipped: {skipped}, Failed: {failed}"
     )
+
+
+@cli.command("transcribe")
+@click.argument("input_dir")
+@click.argument("output_dir")
+@click.option("--model", "-m", help="Whisper model size", default="base")
+@click.option("--timestamps/--no-timestamps", default=True, help="Include timestamps in output")
+def transcribe(input_dir: str, output_dir: str, model: str = "base", timestamps: bool = True) -> None:
+    """Transcribe all .wav audio files in a directory using Whisper.
+
+    Args:
+        input_dir: Directory containing .wav files (e.g., "data/processed")
+        output_dir: Directory to save transcript files (e.g., "data/transcribed")
+        model: Whisper model size (tiny, base, small, medium, large)
+        timestamps: Include timestamps in the transcription output
+
+    Example:
+        $ python cli.py transcribe "data/processed" "data/transcribed"
+    """
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    wav_files = list(input_path.glob("*.wav"))
+    if not wav_files:
+        logger.warning(f"No .wav files found in {input_dir}")
+        click.echo(f"No .wav files found in {input_dir}")
+        return
+
+    processed = 0
+    skipped = 0
+    failed = 0
+
+    for wav_file in wav_files:
+        transcript_file = output_path / f"{wav_file.stem}.txt"
+        if transcript_file.exists():
+            logger.info(f"Transcript already exists for {wav_file.name}, skipping.")
+            skipped += 1
+            continue
+        
+        try:
+            transcript = transcribe_audio(wav_file, model_str=model, timestamps=timestamps)
+            transcript_file.write_text(transcript)
+            logger.success(f"Transcribed {wav_file.name}")
+            processed += 1
+        except Exception as e:
+            logger.error(f"Error transcribing {wav_file.name}: {str(e)}")
+            failed += 1
+            continue
+
+    click.echo(
+        f"Transcription complete. Processed: {processed}, Skipped: {skipped}, Failed: {failed}"
+    )
+
+
+@cli.command("extract-audio")
+@click.argument("video_file")
+@click.option("--output-dir", "-o", help="Output directory for WAV file", default="data/processed")
+def extract_audio(video_file: str, output_dir: str = "data/processed") -> None:
+    """Extract audio from an MP4 video file to WAV format.
+
+    Args:
+        video_file: Path to the MP4 video file
+        output_dir: Directory to save the WAV file (default: data/processed)
+
+    Example:
+        $ python cli.py extract-audio "data/raw/video.mp4"
+        $ python cli.py extract-audio "data/raw/video.mp4" -o "custom/output"
+    """
+    video_path = Path(video_file)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    if not video_path.exists():
+        logger.error(f"Video file not found: {video_path}")
+        click.echo(f"Error: Video file not found: {video_path}")
+        return
+
+    if not video_path.suffix.lower() == ".mp4":
+        logger.error(f"Only MP4 files are supported, got: {video_path.suffix}")
+        click.echo(f"Error: Only MP4 files are supported, got: {video_path.suffix}")
+        return
+
+    try:
+        wav_file = extract_audio_from_mp4(video_path, output_path)
+        click.echo(f"Successfully extracted audio to: {wav_file}")
+    except Exception as e:
+        logger.error(f"Failed to extract audio: {str(e)}")
+        click.echo(f"Error: Failed to extract audio: {str(e)}")
+
+
+@cli.command("process-video")
+@click.argument("video_file")
+@click.option("--model", "-m", help="Whisper model size", default="base")
+@click.option("--timestamps/--no-timestamps", default=True, help="Include timestamps in output")
+def process_video(video_file: str, model: str = "base", timestamps: bool = True) -> None:
+    """Complete video processing: extract audio and transcribe it.
+
+    Args:
+        video_file: Path to the MP4 video file
+        model: Whisper model size (tiny, base, small, medium, large)
+        timestamps: Include timestamps in the transcription output
+
+    Example:
+        $ python cli.py process-video "data/raw/video.mp4"
+        $ python cli.py process-video "data/raw/video.mp4" -m small --no-timestamps
+    """
+    video_path = Path(video_file)
+    
+    if not video_path.exists():
+        logger.error(f"Video file not found: {video_path}")
+        click.echo(f"Error: Video file not found: {video_path}")
+        return
+
+    if not video_path.suffix.lower() == ".mp4":
+        logger.error(f"Only MP4 files are supported, got: {video_path.suffix}")
+        click.echo(f"Error: Only MP4 files are supported, got: {video_path.suffix}")
+        return
+
+    try:
+        # Step 1: Extract audio
+        click.echo("Step 1: Extracting audio from video...")
+        wav_file = extract_audio_from_mp4(video_path, PROCESSED_DIR)
+        click.echo(f"✓ Audio extracted to: {wav_file}")
+
+        # Step 2: Transcribe audio
+        click.echo("Step 2: Transcribing audio...")
+        transcribe_audio(wav_file, model_str=model, timestamps=timestamps)
+        
+        # The transcript is automatically saved by transcribe_audio function
+        transcript_file = TRANSCRIBED_DIR / f"{wav_file.stem}.txt"
+        click.echo(f"✓ Transcript saved to: {transcript_file}")
+        
+        click.echo("🎉 Video processing completed successfully!")
+
+    except Exception as e:
+        logger.error(f"Failed to process video: {str(e)}")
+        click.echo(f"Error: Failed to process video: {str(e)}")
 
 
 if __name__ == "__main__":
